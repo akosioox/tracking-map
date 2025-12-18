@@ -19,7 +19,7 @@
         .online { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
         .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; color: #444; }
         .label { font-weight: bold; color: #888; text-transform: uppercase; font-size: 10px; }
-        #address { display: block; margin-top: 5px; color: #666; font-style: italic; line-height: 1.4; }
+        #debug-info { margin-top:10px; padding:10px; background:#f8d7da; color:#721c24; font-size:11px; display:none; border-radius:4px;}
         hr { border: 0; border-top: 1px solid #eee; margin: 10px 0; }
     </style>
 </head>
@@ -54,6 +54,8 @@
             <span class="label">Current Location</span>
             <small id="address">Waiting for GPS signal...</small>
         </div>
+
+        <div id="debug-info"></div>
     </div>
 
     <div id="map"></div>
@@ -77,7 +79,6 @@
         const targetId = urlParams.get('id'); 
         document.getElementById('display-id').innerText = targetId || "Missing ?id= in URL";
 
-        // 2. WebSocket Logic
         const username = "partysocial"; 
         const password = "admin"; 
         const wsUrl = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${username}&password=${password}`;
@@ -92,29 +93,32 @@
                 console.log("✅ WebSocket Connected!");
                 document.getElementById('dot').classList.add('online');
                 document.getElementById('status-text').innerText = "Live: Streaming";
+                document.getElementById('debug-info').style.display = 'none';
             };
 
             socket.onmessage = (event) => {
                 try {
                     const parsedData = JSON.parse(event.data);
                     
-                    // --- ARRAY HANDLING FIX ---
-                    // The server sends a LIST of vehicles (Array), not just one object.
-                    // We must ensure we treat it as an array.
+                    // Force data into an Array (Handle both single object and list)
                     const updates = Array.isArray(parsedData) ? parsedData : [parsedData];
 
-                    console.log(`📩 Received batch of ${updates.length} updates`);
+                    console.log(`📩 Batch of ${updates.length} updates`);
 
-                    // Loop through every vehicle update in the batch
+                    let matchFound = false;
+
                     updates.forEach(data => {
-                        // Check all possible ID field names
-                        const incomingId = data.deviceld || data.deviceId || data["Device Id (IMEI)"];
+                        // 1. ROBUST ID FINDER: Check every possible name for ID
+                        const incomingId = data.deviceld || data.deviceId || data["Device Id (IMEI)"] || data.imei || data.id;
                         
-                        if (incomingId == targetId) {
-                            console.log(`✅ Update found for target: ${incomingId}`);
+                        // Convert both to strings to ensure '123' matches 123
+                        if (String(incomingId).trim() == String(targetId).trim()) {
+                            matchFound = true;
+                            console.log(`✅ MATCH! Updating map for ID: ${incomingId}`);
                             
-                            const lat = data.Latitude || data.latitude;
-                            const lng = data.Longitude || data.longitude;
+                            // 2. ROBUST COORDINATE FINDER: Check every spelling
+                            const lat = data.Latitude || data.latitude || data.lat || data.Lat;
+                            const lng = data.Longitude || data.longitude || data.lng || data.Lng;
                             const speed = data.Speed || data.speed || 0;
                             const addr = data.Address || data.address || "Location Found";
 
@@ -122,16 +126,24 @@
                             document.getElementById('speed').innerText = speed;
                             document.getElementById('address').innerText = addr;
                             document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
+                            document.getElementById('debug-info').style.display = 'none';
 
                             // Update Map
-                            const pos = [lat, lng];
-                            if (!marker) {
-                                marker = L.marker(pos, {icon: carIcon}).addTo(map);
-                                map.setView(pos, 16);
-                            } else {
-                                marker.setLatLng(pos);
-                                map.panTo(pos);
+                            if (lat && lng) {
+                                const pos = [parseFloat(lat), parseFloat(lng)];
+                                if (!marker) {
+                                    marker = L.marker(pos, {icon: carIcon}).addTo(map);
+                                    map.setView(pos, 16);
+                                } else {
+                                    marker.setLatLng(pos);
+                                    map.panTo(pos);
+                                }
                             }
+                        } else {
+                            // If no match, show this ID in the debug box so you can see what IS working
+                             const debugBox = document.getElementById('debug-info');
+                             debugBox.style.display = 'block';
+                             debugBox.innerHTML = `<strong>Scanning...</strong><br>Saw ID: ${incomingId}<br>(Looking for: ${targetId})`;
                         }
                     });
 
@@ -141,22 +153,18 @@
             };
 
             socket.onclose = () => {
-                console.warn("⚠️ Connection closed. Retrying in 5 seconds...");
+                console.warn("⚠️ Reconnecting...");
                 document.getElementById('dot').classList.remove('online');
                 document.getElementById('status-text').innerText = "Reconnecting...";
                 setTimeout(connect, 5000);
             };
-
-            socket.onerror = (err) => {
-                console.error("❌ Socket Error:", err);
-            };
         }
 
-        // Start connection if targetId exists
         if (targetId) {
             connect();
         } else {
             document.getElementById('status-text').innerText = "URL ID Required";
+            alert("Add ?id=YOUR_ID to the URL");
         }
     </script>
 </body>
