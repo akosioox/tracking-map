@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Delivery Tracker</title>
+    <title>Live Delivery Tracker - Diagnostic</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -11,7 +11,7 @@
         .tracking-panel {
             position: absolute; top: 20px; right: 20px; z-index: 1000;
             background: white; padding: 15px; border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.15); width: 280px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.15); width: 300px;
         }
         .status-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
         .status-indicator { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
@@ -19,7 +19,15 @@
         .online { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
         .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; color: #444; }
         .label { font-weight: bold; color: #888; text-transform: uppercase; font-size: 10px; }
-        #debug-info { margin-top:10px; padding:10px; background:#f8d7da; color:#721c24; font-size:11px; display:none; border-radius:4px;}
+        
+        /* DIAGNOSTIC STYLES */
+        #debug-info { 
+            margin-top:10px; padding:10px; background:#f8d7da; color:#333; 
+            font-size:10px; display:block; border-radius:4px; 
+            border: 1px solid #f5c6cb;
+        }
+        pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; }
+        
         hr { border: 0; border-top: 1px solid #eee; margin: 10px 0; }
     </style>
 </head>
@@ -40,22 +48,15 @@
 
         <hr>
 
-        <div class="data-row">
-            <span class="label">Speed</span>
-            <span><span id="speed" style="font-weight: bold; font-size: 16px;">0</span> km/h</span>
-        </div>
+        <div class="label">RAW DATA FROM SERVER (Screenshot This):</div>
+        <div id="debug-info">Waiting for signal...</div>
+
+        <hr>
 
         <div class="data-row">
             <span class="label">Last Signal</span>
             <span id="last-updated">Never</span>
         </div>
-
-        <div class="data-row" style="flex-direction: column;">
-            <span class="label">Current Location</span>
-            <small id="address">Waiting for GPS signal...</small>
-        </div>
-
-        <div id="debug-info"></div>
     </div>
 
     <div id="map"></div>
@@ -92,43 +93,41 @@
             socket.onopen = () => {
                 console.log("✅ WebSocket Connected!");
                 document.getElementById('dot').classList.add('online');
-                document.getElementById('status-text').innerText = "Live: Streaming";
-                document.getElementById('debug-info').style.display = 'none';
+                document.getElementById('status-text').innerText = "Live: Diagnostic Mode";
             };
 
             socket.onmessage = (event) => {
                 try {
                     const parsedData = JSON.parse(event.data);
-                    
-                    // Force data into an Array (Handle both single object and list)
+                    // Force into Array
                     const updates = Array.isArray(parsedData) ? parsedData : [parsedData];
 
-                    console.log(`📩 Batch of ${updates.length} updates`);
+                    console.log(`📩 Received batch of ${updates.length} updates`);
 
-                    let matchFound = false;
+                    // ---------------------------------------------------------
+                    // DIAGNOSTIC LOGIC: PRINT RAW DATA TO SCREEN
+                    // ---------------------------------------------------------
+                    if (updates.length > 0) {
+                        const sample = updates[0]; // Take the first vehicle found
+                        
+                        // Pretty print the JSON to the red box
+                        const prettyJson = JSON.stringify(sample, null, 2);
+                        document.getElementById('debug-info').innerHTML = `<pre>${prettyJson}</pre>`;
+                        document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
+                    }
 
+                    // ---------------------------------------------------------
+                    // ATTEMPT TO MAP (Even if names are wrong, we try)
+                    // ---------------------------------------------------------
                     updates.forEach(data => {
-                        // 1. ROBUST ID FINDER: Check every possible name for ID
+                        // Loose check for ID
                         const incomingId = data.deviceld || data.deviceId || data["Device Id (IMEI)"] || data.imei || data.id;
                         
-                        // Convert both to strings to ensure '123' matches 123
                         if (String(incomingId).trim() == String(targetId).trim()) {
-                            matchFound = true;
-                            console.log(`✅ MATCH! Updating map for ID: ${incomingId}`);
+                            // Try to map
+                            const lat = data.Latitude || data.latitude || data.lat;
+                            const lng = data.Longitude || data.longitude || data.lng;
                             
-                            // 2. ROBUST COORDINATE FINDER: Check every spelling
-                            const lat = data.Latitude || data.latitude || data.lat || data.Lat;
-                            const lng = data.Longitude || data.longitude || data.lng || data.Lng;
-                            const speed = data.Speed || data.speed || 0;
-                            const addr = data.Address || data.address || "Location Found";
-
-                            // Update UI
-                            document.getElementById('speed').innerText = speed;
-                            document.getElementById('address').innerText = addr;
-                            document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
-                            document.getElementById('debug-info').style.display = 'none';
-
-                            // Update Map
                             if (lat && lng) {
                                 const pos = [parseFloat(lat), parseFloat(lng)];
                                 if (!marker) {
@@ -139,21 +138,16 @@
                                     map.panTo(pos);
                                 }
                             }
-                        } else {
-                            // If no match, show this ID in the debug box so you can see what IS working
-                             const debugBox = document.getElementById('debug-info');
-                             debugBox.style.display = 'block';
-                             debugBox.innerHTML = `<strong>Scanning...</strong><br>Saw ID: ${incomingId}<br>(Looking for: ${targetId})`;
                         }
                     });
 
                 } catch (err) {
-                    console.error("❌ Message parsing error:", err);
+                    document.getElementById('debug-info').innerText = "Error parsing JSON: " + err.message;
                 }
             };
 
             socket.onclose = () => {
-                console.warn("⚠️ Reconnecting...");
+                console.warn("⚠️ Connection closed.");
                 document.getElementById('dot').classList.remove('online');
                 document.getElementById('status-text').innerText = "Reconnecting...";
                 setTimeout(connect, 5000);
