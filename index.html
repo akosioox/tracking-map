@@ -6,39 +6,53 @@
     <title>Live Delivery Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { height: 100vh; width: 100%; background: #aad3df; }
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; background: #e0e0e0; }
         .tracking-panel {
             position: absolute; top: 20px; right: 20px; z-index: 1000;
             background: white; padding: 15px; border-radius: 12px;
             box-shadow: 0 8px 30px rgba(0,0,0,0.15); width: 280px;
         }
-        .status-indicator { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 10px; }
-        .dot { height: 10px; width: 10px; border-radius: 50%; background: #bbb; }
+        .status-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .status-indicator { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+        .dot { height: 10px; width: 10px; border-radius: 50%; background: #bbb; transition: background 0.3s; }
         .online { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
         .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; color: #444; }
         .label { font-weight: bold; color: #888; text-transform: uppercase; font-size: 10px; }
+        #address { display: block; margin-top: 5px; color: #666; font-style: italic; line-height: 1.4; }
+        hr { border: 0; border-top: 1px solid #eee; margin: 10px 0; }
     </style>
 </head>
 <body>
 
     <div class="tracking-panel">
-        <div class="status-indicator">
-            <div id="dot" class="dot"></div>
-            <span id="status-text">Connecting...</span>
+        <div class="status-header">
+            <div class="status-indicator">
+                <div id="dot" class="dot"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
         </div>
+        
         <div class="data-row">
-            <span class="label">Device ID</span>
-            <span id="display-id" style="font-family: monospace;">---</span>
+            <span class="label">Target Device</span>
+            <span id="display-id" style="font-family: monospace; background: #f0f0f0; padding: 2px 4px; border-radius: 4px;">None</span>
         </div>
-        <hr style="border:0; border-top: 1px solid #eee;">
+
+        <hr>
+
         <div class="data-row">
             <span class="label">Speed</span>
-            <span><span id="speed" style="font-weight: bold;">0</span> km/h</span>
+            <span><span id="speed" style="font-weight: bold; font-size: 16px;">0</span> km/h</span>
         </div>
+
+        <div class="data-row">
+            <span class="label">Last Signal</span>
+            <span id="last-updated">Never</span>
+        </div>
+
         <div class="data-row" style="flex-direction: column;">
-            <span class="label">Current Address</span>
-            <small id="address" style="color: #666; font-style: italic; margin-top: 4px;">Waiting for signal...</small>
+            <span class="label">Current Location</span>
+            <small id="address">Waiting for GPS signal...</small>
         </div>
     </div>
 
@@ -46,8 +60,11 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // 1. Initialize Map
         const map = L.map('map').setView([0, 0], 2);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
 
         const carIcon = L.icon({
             iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png',
@@ -58,61 +75,89 @@
         let marker;
         const urlParams = new URLSearchParams(window.location.search);
         const targetId = urlParams.get('id'); 
-        document.getElementById('display-id').innerText = targetId || "No ID provided";
+        document.getElementById('display-id').innerText = targetId || "Missing ?id= in URL";
 
+        // 2. WebSocket Logic
         const username = "partysocial"; 
         const password = "admin"; 
         const wsUrl = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${username}&password=${password}`;
 
+        console.log("🚀 Attempting connection to:", wsUrl);
+        let socket;
+
         function connect() {
-            const socket = new WebSocket(wsUrl);
+            socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
+                console.log("✅ WebSocket Connected!");
                 document.getElementById('dot').classList.add('online');
-                document.getElementById('status-text').innerText = "Live: Connected";
-                console.log("✅ Connection Established");
+                document.getElementById('status-text').innerText = "Live: Streaming";
             };
 
             socket.onmessage = (event) => {
                 try {
-                    const data = JSON.parse(event.data);
+                    const parsedData = JSON.parse(event.data);
                     
-                    // BRACKET NOTATION FIX: Accessing the exact key from your screenshot
-                    const incomingId = data["Device Id (IMEI)"] || data.deviceld || data.deviceId;
-                    console.log("📩 Signal from ID:", incomingId);
+                    // --- ARRAY HANDLING FIX ---
+                    // The server sends a LIST of vehicles (Array), not just one object.
+                    // We must ensure we treat it as an array.
+                    const updates = Array.isArray(parsedData) ? parsedData : [parsedData];
 
-                    if (incomingId == targetId) {
-                        // CAPITALIZATION FIX: Using keys shown in your API logs
-                        const lat = parseFloat(data.Latitude || data.latitude);
-                        const lng = parseFloat(data.Longitude || data.longitude);
-                        const speed = data.Speed || data.speed || 0;
-                        const addr = data.Address || data.address || "Location found";
+                    console.log(`📩 Received batch of ${updates.length} updates`);
 
-                        document.getElementById('speed').innerText = speed;
-                        document.getElementById('address').innerText = addr;
+                    // Loop through every vehicle update in the batch
+                    updates.forEach(data => {
+                        // Check all possible ID field names
+                        const incomingId = data.deviceld || data.deviceId || data["Device Id (IMEI)"];
+                        
+                        if (incomingId == targetId) {
+                            console.log(`✅ Update found for target: ${incomingId}`);
+                            
+                            const lat = data.Latitude || data.latitude;
+                            const lng = data.Longitude || data.longitude;
+                            const speed = data.Speed || data.speed || 0;
+                            const addr = data.Address || data.address || "Location Found";
 
-                        const pos = [lat, lng];
-                        if (!marker) {
-                            marker = L.marker(pos, {icon: carIcon}).addTo(map);
-                            map.setView(pos, 16);
-                        } else {
-                            marker.setLatLng(pos);
-                            map.panTo(pos);
+                            // Update UI
+                            document.getElementById('speed').innerText = speed;
+                            document.getElementById('address').innerText = addr;
+                            document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
+
+                            // Update Map
+                            const pos = [lat, lng];
+                            if (!marker) {
+                                marker = L.marker(pos, {icon: carIcon}).addTo(map);
+                                map.setView(pos, 16);
+                            } else {
+                                marker.setLatLng(pos);
+                                map.panTo(pos);
+                            }
                         }
-                    }
+                    });
+
                 } catch (err) {
-                    console.error("❌ Message parsing error", err);
+                    console.error("❌ Message parsing error:", err);
                 }
             };
 
             socket.onclose = () => {
+                console.warn("⚠️ Connection closed. Retrying in 5 seconds...");
                 document.getElementById('dot').classList.remove('online');
-                document.getElementById('status-text').innerText = "Disconnected - Retrying...";
+                document.getElementById('status-text').innerText = "Reconnecting...";
                 setTimeout(connect, 5000);
+            };
+
+            socket.onerror = (err) => {
+                console.error("❌ Socket Error:", err);
             };
         }
 
-        if (targetId) connect();
+        // Start connection if targetId exists
+        if (targetId) {
+            connect();
+        } else {
+            document.getElementById('status-text').innerText = "URL ID Required";
+        }
     </script>
 </body>
 </html>
