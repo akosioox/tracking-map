@@ -35,7 +35,7 @@
         
         <div class="data-row">
             <span class="label">Vehicle</span>
-            <span id="vehicle-name" style="font-weight:bold;">Finding...</span>
+            <span id="vehicle-name" style="font-weight:bold;">Locating...</span>
         </div>
 
         <hr>
@@ -75,8 +75,9 @@
 
         let marker;
         const urlParams = new URLSearchParams(window.location.search);
-        const targetId = urlParams.get('id'); // This is your '864275...' number
+        const targetId = urlParams.get('id'); // e.g. 864275077356783
 
+        // 2. WebSocket Configuration
         const username = "partysocial"; 
         const password = "admin"; 
         const wsUrl = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${username}&password=${password}`;
@@ -100,10 +101,12 @@
                     const updates = Array.isArray(parsedData) ? parsedData : [parsedData];
 
                     updates.forEach(data => {
-                        // --- THE FIX: Using 'uniqueId' to match your URL ---
+                        
+                        // --- THE FIX IS HERE: Match against 'uniqueId' ---
+                        // We check if data.uniqueId matches the ID in your URL
                         if (data.uniqueId == targetId) {
                             
-                            // Extract Data
+                            // Extract Data (using keys from your screenshot)
                             const lat = data.latitude;
                             const lng = data.longitude;
                             const speed = data.speed || 0;
@@ -134,7 +137,7 @@
             };
 
             socket.onclose = () => {
-                console.warn("⚠️ Reconnecting...");
+                console.warn("⚠️ Connection Closed. Reconnecting...");
                 document.getElementById('dot').classList.remove('online');
                 document.getElementById('status-text').innerText = "Reconnecting...";
                 setTimeout(connect, 5000);
