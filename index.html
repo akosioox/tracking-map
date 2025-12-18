@@ -58,9 +58,9 @@
 
         // 2. WebSocket Configuration
         // Authentication via query parameters as per documentation 
-        const username = "YOUR_USERNAME"; // Replace with your registered username 
-        const password = "YOUR_PASSWORD"; // Replace with your account password 
-        const wsEndpoint = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${partysocial}&password=${admin}`; [cite: 1]
+        const username = "partysocial"; // Replace with your registered username 
+        const password = "admin"; // Replace with your account password 
+        const wsEndpoint = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${username}&password=${password}`; [cite: 1]
 
         const socket = new WebSocket(wsEndpoint); [cite: 1]
 
