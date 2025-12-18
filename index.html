@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -89,30 +90,35 @@
             socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
-                console.log("✅ WebSocket Connected!");
+                console.log("✅ WebSocket Connected Successfully!");
                 document.getElementById('dot').classList.add('online');
-                document.getElementById('status-text').innerText = "Live: Streaming";
+                document.getElementById('status-text').innerText = "Live: Connected";
             };
 
             socket.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
                     
-                    // --- SUPER DEBUG LOGGING ---
-                    // This prints EVERY device the server talks about to your F12 console
-                    const incomingId = data.deviceld || data.deviceId;
-                    console.log(`📡 Ping from ID [${incomingId}] at ${new Date().toLocaleTimeString()}`);
+                    // --- PROPERTY ACCESS FIX ---
+                    // According to your screenshot, the ID is stored in "Device Id (IMEI)"
+                    const incomingId = data["Device Id (IMEI)"] || data.deviceld || data.deviceId;
+                    console.log(`📡 Signal from: [${incomingId}]`);
 
-                    // Logic to update map if ID matches
                     if (incomingId == targetId) {
-                        const { latitude, longitude, speed, address } = data;
+                        console.log("✅ Match Found! Updating Map...");
+                        
+                        // Extracting values using capitalized keys shown in your screenshots
+                        const lat = data.Latitude || data.latitude;
+                        const lng = data.Longitude || data.longitude;
+                        const speed = data.Speed || data.speed || 0;
+                        const addr = data.Address || data.address || "Address not available";
 
                         // Update UI
-                        document.getElementById('speed').innerText = speed || 0;
-                        document.getElementById('address').innerText = address || "Address updating...";
+                        document.getElementById('speed').innerText = speed;
+                        document.getElementById('address').innerText = addr;
                         document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
 
-                        const pos = [latitude, longitude];
+                        const pos = [lat, lng];
                         if (!marker) {
                             marker = L.marker(pos, {icon: carIcon}).addTo(map);
                             map.setView(pos, 16);
@@ -122,7 +128,7 @@
                         }
                     }
                 } catch (err) {
-                    console.error("❌ Message Error:", err);
+                    console.error("❌ Message parsing error:", err);
                 }
             };
 
@@ -138,12 +144,11 @@
             };
         }
 
-        // Start connection
+        // Start connection if targetId exists
         if (targetId) {
             connect();
         } else {
-            document.getElementById('status-text').innerText = "Setup Required";
-            alert("Please add ?id=YOUR_DEVICE_ID to your browser URL");
+            document.getElementById('status-text').innerText = "URL ID Required";
         }
     </script>
 </body>
