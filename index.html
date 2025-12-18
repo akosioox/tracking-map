@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Delivery Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        .tracking-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            max-width: 250px;
+        }
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: #bbb;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        .online { background-color: #2ecc71; }
+    </style>
+</head>
+<body>
+
+    <div class="tracking-info">
+        <h3 id="vehicle-name">Vehicle Tracker</h3>
+        <p><span id="connection-status" class="status-dot"></span> <span id="status-text">Connecting...</span></p>
+        <hr>
+        <p><strong>Status:</strong> <span id="state">---</span></p>
+        <p><strong>Speed:</strong> <span id="speed">0</span> km/h</p>
+        <p><strong>Address:</strong> <br><small id="address">Fetching address...</small></p>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // 1. Initialize the Map
+        const map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let marker;
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetDeviceId = urlParams.get('id'); // Get ID from URL: ?id=0001
+
+        // 2. WebSocket Configuration
+        // Authentication via query parameters as per documentation 
+        const username = "YOUR_USERNAME"; // Replace with your registered username 
+        const password = "YOUR_PASSWORD"; // Replace with your account password 
+        const wsEndpoint = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${partysocial}&password=${admin}`; [cite: 1]
+
+        const socket = new WebSocket(wsEndpoint); [cite: 1]
+
+        socket.onopen = () => {
+            console.log("WebSocket connected successfully.");
+            document.getElementById('connection-status').classList.add('online');
+            document.getElementById('status-text').innerText = "Live Connection";
+        };
+
+        // 3. Handle Real-Time Updates
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data); [cite: 1]
+                console.log("Data received:", data);
+
+                // Filter data to only show the device requested in the URL 
+                if (data.deviceId == targetDeviceId) { [cite: 1]
+                    const { latitude, longitude, speed, address, state } = data; [cite: 1]
+
+                    // Update UI elements
+                    document.getElementById('state').innerText = state || "Unknown"; [cite: 1]
+                    document.getElementById('speed').innerText = speed || 0; [cite: 1]
+                    document.getElementById('address').innerText = address || "N/A"; [cite: 1]
+
+                    // Update Map Marker
+                    const position = [latitude, longitude]; [cite: 1]
+                    if (!marker) {
+                        marker = L.marker(position).addTo(map);
+                        map.setView(position, 16);
+                    } else {
+                        marker.setLatLng(position);
+                        map.panTo(position); // Keep the vehicle centered
+                    }
+                }
+            } catch (err) {
+                console.error("Error parsing WebSocket data:", err);
+            }
+        };
+
+        socket.onclose = () => {
+            document.getElementById('connection-status').classList.remove('online');
+            document.getElementById('status-text').innerText = "Disconnected";
+            console.warn("WebSocket connection closed.");
+        };
+
+        socket.onerror = (error) => {
+            console.error("WebSocket Error:", error);
+        };
+    </script>
+</body>
+</html>
