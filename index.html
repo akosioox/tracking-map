@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Delivery Tracker + Address Lookup</title>
+    <title>Live Delivery Tracker + ETA</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -22,6 +22,7 @@
         .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; color: #444; }
         .label { font-weight: bold; color: #888; text-transform: uppercase; font-size: 10px; }
         
+        /* ETA HIGHLIGHT STYLE */
         .eta-box { background: #e3f2fd; padding: 8px; border-radius: 6px; margin-top: 10px; text-align: center; }
         .eta-time { font-size: 18px; font-weight: bold; color: #1565c0; display: block; }
         
@@ -53,7 +54,7 @@
         <div class="eta-box">
             <span class="label" style="color:#1565c0;">Estimated Arrival</span>
             <span id="eta" class="eta-time">-- min</span>
-            <small id="distance-remaining" style="color:#555;">Finding destination...</small>
+            <small id="distance-remaining" style="color:#555;">Calculating route...</small>
         </div>
 
         <div class="data-row" style="flex-direction: column; margin-top: 15px;">
@@ -66,16 +67,17 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- 1. SETUP MAP ---
+        // --- 1. SETUP MAP & ICONS ---
         const map = L.map('map').setView([25.2, 55.27], 10);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
 
-        // Icons
+        // Car Icon
         const carIcon = L.icon({
             iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png',
             iconSize: [40, 40], iconAnchor: [20, 20], popupAnchor: [0, -20]
         });
 
+        // Blue Marker Icon (For Destination/Origin)
         const blueIcon = new L.Icon({
             iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
             shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -83,62 +85,32 @@
         });
 
         let carMarker;
-        let destCoords = null; // Will store [lat, lng] of customer
-
-        // --- 2. GET URL PARAMETERS ---
+        
+        // --- 2. PARSE URL PARAMETERS ---
         const urlParams = new URLSearchParams(window.location.search);
-        const targetId = urlParams.get('id');
-        const addressParam = urlParams.get('address'); // Read address from URL
+        const targetId = urlParams.get('id'); 
+        
+        // Parse Destination (e.g. &dest=25.123,55.123)
+        const destParam = urlParams.get('dest'); 
+        let destCoords = null;
 
-        // --- 3. AUTO-GEOCODE FUNCTION (Address -> Coordinates) ---
-        async function resolveAddress() {
-            if (!addressParam) {
-                document.getElementById('distance-remaining').innerText = "No address in link";
-                return;
-            }
-
-            document.getElementById('distance-remaining').innerText = "Locating address...";
-            
-            // Clean up address for better search results
-            const cleanAddress = addressParam.replace(/[^\w\s,]/gi, ''); 
-            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cleanAddress)}&limit=1`;
-
-            try {
-                const response = await fetch(url);
-                const results = await response.json();
-
-                if (results.length > 0) {
-                    const lat = parseFloat(results[0].lat);
-                    const lon = parseFloat(results[0].lon);
-                    destCoords = [lat, lon];
-
-                    // Add Blue Marker
-                    L.marker(destCoords, {icon: blueIcon}).addTo(map)
-                        .bindPopup(`<b>Destination:</b><br>${addressParam}`).openPopup();
-                    
-                    document.getElementById('distance-remaining').innerText = "Address Found. Waiting for car...";
-                    
-                    // Zoom map to show both Dubai area and destination
-                    map.setView(destCoords, 12);
-                } else {
-                    document.getElementById('distance-remaining').innerText = "Address not found on map";
-                    console.warn("Geocoding failed for:", addressParam);
-                }
-            } catch (error) {
-                console.error("Geocoding Error:", error);
-                document.getElementById('distance-remaining').innerText = "Map Error";
+        if (destParam) {
+            const parts = destParam.split(',');
+            if (parts.length === 2) {
+                destCoords = [parseFloat(parts[0]), parseFloat(parts[1])];
+                L.marker(destCoords, {icon: blueIcon}).addTo(map).bindPopup("Destination").openPopup();
             }
         }
 
-        // Call the geocoder immediately
-        resolveAddress();
-
-
-        // --- 4. ETA CALCULATOR ---
+        // --- 3. ETA CALCULATOR (Using OSRM Free API) ---
         async function updateEta(carLat, carLng) {
-            if (!destCoords) return;
+            if (!destCoords) {
+                document.getElementById('eta').innerText = "No Destination";
+                document.getElementById('distance-remaining').innerText = "Add &dest=lat,lng to URL";
+                return;
+            }
 
-            // OSRM API (Lng,Lat format)
+            // OSRM requires "Lng,Lat" (Longitude first)
             const url = `https://router.project-osrm.org/route/v1/driving/${carLng},${carLat};${destCoords[1]},${destCoords[0]}?overview=false`;
 
             try {
@@ -146,24 +118,28 @@
                 const json = await response.json();
                 
                 if (json.routes && json.routes.length > 0) {
-                    const duration = json.routes[0].duration; // seconds
-                    const distance = json.routes[0].distance; // meters
+                    const durationSeconds = json.routes[0].duration;
+                    const distanceMeters = json.routes[0].distance;
                     
-                    const mins = Math.ceil(duration / 60);
-                    const km = (distance / 1000).toFixed(1);
+                    // Convert to minutes
+                    const mins = Math.ceil(durationSeconds / 60);
+                    const km = (distanceMeters / 1000).toFixed(1);
 
                     document.getElementById('eta').innerText = `${mins} min`;
-                    document.getElementById('distance-remaining').innerText = `${km} km away`;
+                    document.getElementById('distance-remaining').innerText = `${km} km remaining`;
                 }
-            } catch (err) { console.error("ETA Error", err); }
+            } catch (err) {
+                console.error("ETA Error:", err);
+            }
         }
 
-
-        // --- 5. WEBSOCKET CONNECTION ---
+        // --- 4. WEBSOCKET CONNECTION ---
         const username = "partysocial"; 
         const password = "admin"; 
         const wsUrl = `wss://beta.mylocatorplus.com/locator-clients/api/socket?username=${username}&password=${password}`;
 
+        console.log("🚀 Starting Tracker for ID:", targetId);
+        
         function connect() {
             const socket = new WebSocket(wsUrl);
 
@@ -178,6 +154,7 @@
                     const updates = Array.isArray(parsedData) ? parsedData : [parsedData];
 
                     updates.forEach(data => {
+                        // Match uniqueId (The Long IMEI)
                         if (data.uniqueId == targetId) {
                             
                             const lat = data.latitude;
@@ -186,24 +163,29 @@
                             const addr = data.address || "Location Found";
                             const name = data.name || "Delivery Vehicle";
 
+                            // Update UI
                             document.getElementById('vehicle-name').innerText = name;
                             document.getElementById('speed').innerText = Math.round(speed);
                             document.getElementById('address').innerText = addr;
 
+                            // Update Map Car Position
                             const pos = [lat, lng];
                             if (!carMarker) {
                                 carMarker = L.marker(pos, {icon: carIcon}).addTo(map).bindPopup(name);
-                                map.setView(pos, 16);
+                                map.setView(pos, 16); 
                             } else {
                                 carMarker.setLatLng(pos);
                                 map.panTo(pos);
                             }
 
-                            // Calculate ETA if we found the destination
-                            if(destCoords) updateEta(lat, lng);
+                            // Calculate ETA
+                            updateEta(lat, lng);
                         }
                     });
-                } catch (err) { console.error(err); }
+
+                } catch (err) {
+                    console.error("Data Error:", err);
+                }
             };
 
             socket.onclose = () => {
@@ -213,9 +195,11 @@
             };
         }
 
-        if (targetId) connect();
-        else alert("Link Missing ID");
-
+        if (targetId) {
+            connect();
+        } else {
+            alert("URL ID Required");
+        }
     </script>
 </body>
 </html>
